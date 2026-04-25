@@ -1,0 +1,54 @@
+import Busboy from "busboy";
+import { Readable } from "node:stream";
+
+export type ParsedFile = {
+  fieldname: string;
+  filename: string;
+  mimeType: string;
+  buffer: Buffer;
+};
+
+export type ParsedMultipart = {
+  files: ParsedFile[];
+  fields: Record<string, string>;
+};
+
+export async function parseMultipart(req: Request): Promise<ParsedMultipart> {
+  const contentType = req.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("multipart/form-data")) {
+    throw new Error("Contenido no es multipart/form-data.");
+  }
+
+  const bodyBuffer = Buffer.from(await req.arrayBuffer());
+
+  return await new Promise<ParsedMultipart>((resolve, reject) => {
+    const busboy = Busboy({ headers: { "content-type": contentType } });
+
+    const files: ParsedFile[] = [];
+    const fields: Record<string, string> = {};
+
+    busboy.on("file", (fieldname, file, info) => {
+      const chunks: Buffer[] = [];
+      file.on("data", (d: Buffer) => chunks.push(d));
+      file.on("end", () => {
+        files.push({
+          fieldname,
+          filename: info.filename || "upload",
+          mimeType: info.mimeType || "application/octet-stream",
+          buffer: Buffer.concat(chunks),
+        });
+      });
+      file.on("error", reject);
+    });
+
+    busboy.on("field", (name, val) => {
+      fields[name] = val;
+    });
+
+    busboy.on("error", reject);
+    busboy.on("finish", () => resolve({ files, fields }));
+    busboy.on("close", () => resolve({ files, fields }));
+
+    Readable.from(bodyBuffer).pipe(busboy);
+  });
+}

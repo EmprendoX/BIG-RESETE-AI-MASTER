@@ -1,0 +1,1 @@
+{"root":["./netlify/functions/chat.ts","./netlify/functions/export-docx.ts","./netlify/functions/export-pdf.ts","./netlify/functions/generate-course-summary.ts","./netlify/functions/transcribe.ts","./netlify/functions/upload-course-file.ts","./netlify/functions/_lib/openai.ts","./netlify/functions/_lib/parsemultipart.ts","./netlify/functions/_lib/prompts.ts"],"version":"5.9.3"}
