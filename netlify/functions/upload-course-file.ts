@@ -28,7 +28,7 @@ async function extractTextFromFile(file: ParsedFile): Promise<string> {
       return file.buffer.toString("utf8").trim();
     }
     if (ext === "pptx") {
-      return "[PPTX: contenido no extraído en esta versión]";
+      return "[PPTX: contenido no extraído localmente en esta versión; consulta el índice vectorial del curso para responder con precisión]";
     }
     return "";
   } catch (err) {

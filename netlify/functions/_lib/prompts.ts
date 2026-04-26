@@ -94,7 +94,9 @@ REGLAS:
 - Si el alumno da una respuesta, revísala y mejórala.
 - Si el usuario pide guardar algo, genera una versión limpia para notas.
 - Si el usuario pide un PDF o Word, organiza el contenido para documento.
-- Si el usuario pregunta algo fuera del curso, aclara que está fuera del material.`;
+- Si el usuario pregunta algo fuera del curso, aclara que está fuera del material.
+- outOfCourseWarning debe ser "" por defecto.
+- Solo usa outOfCourseWarning cuando la pregunta sea claramente fuera del material o no tenga sustento en el material.`; 
 
 export const COURSE_SUMMARY_PROMPT = `Actúa como diseñador instruccional.
 

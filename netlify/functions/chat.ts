@@ -104,16 +104,15 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     },
   ];
 
-  const tools =
-    !hasCourseContent && body.vectorStoreId
-      ? [
-          {
-            type: "file_search" as const,
-            vector_store_ids: [body.vectorStoreId],
-            max_num_results: 5,
-          },
-        ]
-      : undefined;
+  const tools = body.vectorStoreId
+    ? [
+        {
+          type: "file_search" as const,
+          vector_store_ids: [body.vectorStoreId],
+          max_num_results: 5,
+        },
+      ]
+    : undefined;
 
   try {
     const response = await openai.responses.create({
