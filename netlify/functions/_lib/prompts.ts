@@ -124,6 +124,21 @@ Devuelve SIEMPRE JSON válido con esta estructura exacta:
   "missingContentWarnings": []
 }`;
 
+export const CHUNK_SUMMARY_PROMPT = `Actua como disenador instruccional.
+Resume el fragmento del material del curso sin inventar contenido.
+Devuelve SOLO JSON valido usando el esquema indicado.
+
+Prioriza:
+- Objetivo principal del fragmento
+- Temas clave
+- Ideas accionables
+- Dudas o vacios del contenido`;
+
+export const BATCH_SUMMARY_PROMPT = `Actua como disenador instruccional.
+Recibiras multiples resumentes de fragmentos de un curso.
+Consolidalos en un resumen de lote sin duplicados ni contradicciones.
+Devuelve SOLO JSON valido usando el esquema indicado.`;
+
 export const AGENT_RESPONSE_JSON_SCHEMA = {
   name: "agent_response",
   strict: true,
@@ -175,6 +190,54 @@ export const COURSE_SUMMARY_JSON_SCHEMA = {
       "firstLesson",
       "initialQuestions",
       "finalDeliverable",
+      "missingContentWarnings",
+    ],
+  },
+} as const;
+
+export const CHUNK_SUMMARY_JSON_SCHEMA = {
+  name: "chunk_summary",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mainObjective: { type: "string" },
+      detectedTopics: { type: "array", items: { type: "string" } },
+      keyInsights: { type: "array", items: { type: "string" } },
+      missingContentWarnings: { type: "array", items: { type: "string" } },
+    },
+    required: [
+      "mainObjective",
+      "detectedTopics",
+      "keyInsights",
+      "missingContentWarnings",
+    ],
+  },
+} as const;
+
+export const BATCH_SUMMARY_JSON_SCHEMA = {
+  name: "batch_summary",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mainObjective: { type: "string" },
+      detectedTopics: { type: "array", items: { type: "string" } },
+      suggestedModules: { type: "array", items: { type: "string" } },
+      firstLessonIdeas: { type: "array", items: { type: "string" } },
+      initialQuestions: { type: "array", items: { type: "string" } },
+      finalDeliverables: { type: "array", items: { type: "string" } },
+      missingContentWarnings: { type: "array", items: { type: "string" } },
+    },
+    required: [
+      "mainObjective",
+      "detectedTopics",
+      "suggestedModules",
+      "firstLessonIdeas",
+      "initialQuestions",
+      "finalDeliverables",
       "missingContentWarnings",
     ],
   },

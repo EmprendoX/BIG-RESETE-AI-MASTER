@@ -4,7 +4,13 @@ import {
   COURSE_SUMMARY_PROMPT,
   fillPlaceholders,
 } from "./_lib/prompts";
-import { errorResponse, getModel, getOpenAI, jsonResponse } from "./_lib/openai";
+import {
+  errorResponse,
+  getModel,
+  getOpenAI,
+  jsonResponse,
+  withTimeoutAndRetry,
+} from "./_lib/openai";
 
 type Body = {
   courseName?: string;
@@ -69,34 +75,48 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
       : undefined;
 
   try {
-    const response = await openai.responses.create({
-      model,
-      input: [
-        {
-          role: "system",
-          content: systemPrompt,
+    let reduced = false;
+    const summary = await withTimeoutAndRetry(
+      async (signal) => {
+        const response = await openai.responses.create(
+          {
+            model,
+            input: [
+              {
+                role: "system",
+                content: reduced ? systemPrompt.slice(0, 4000) : systemPrompt,
+              },
+              {
+                role: "user",
+                content: userPrompt,
+              },
+            ],
+            tools: reduced ? undefined : tools,
+            text: {
+              format: {
+                type: "json_schema",
+                name: COURSE_SUMMARY_JSON_SCHEMA.name,
+                schema: COURSE_SUMMARY_JSON_SCHEMA.schema,
+                strict: true,
+              },
+            },
         },
-        {
-          role: "user",
-          content: userPrompt,
-        },
-      ],
-      tools,
-      text: {
-        format: {
-          type: "json_schema",
-          name: COURSE_SUMMARY_JSON_SCHEMA.name,
-          schema: COURSE_SUMMARY_JSON_SCHEMA.schema,
-          strict: true,
-        },
+          { signal }
+        );
+        const text = response.output_text;
+        if (!text) {
+          throw new Error("Respuesta vacia del modelo.");
+        }
+        return JSON.parse(text);
       },
-    });
-
-    const text = response.output_text;
-    if (!text) {
-      return errorResponse(502, "Respuesta vacía del modelo.");
-    }
-    const summary = JSON.parse(text);
+      {
+        timeoutMs: 20_000,
+        retries: 1,
+        onRetry: () => {
+          reduced = true;
+        },
+      }
+    );
 
     return jsonResponse(200, { success: true, summary });
   } catch (err) {

@@ -9,7 +9,7 @@ import { useChat } from "../hooks/useChat";
 type Tab = "course" | "chat" | "notes";
 
 export default function Classroom() {
-  const { setup, profile, summary, messages, resetAll, appendMessage } =
+  const { setup, profile, summary, messages, resetAll, appendMessage, indexStatus } =
     useCourseSession();
   const requestedTab = useCourseSession((s) => s.requestedTab);
   const consumeRequestedTab = useCourseSession((s) => s.consumeRequestedTab);
@@ -100,6 +100,12 @@ export default function Classroom() {
       </nav>
 
       <div className="classroom-grid">
+        {indexStatus === "degraded" ? (
+          <div className="pdf-missing-banner">
+            El curso arranco en modo degradado. El chat usara el material extraido
+            localmente mientras el indice completo no este disponible.
+          </div>
+        ) : null}
         <aside
           className={`column column-course ${
             tab === "course" ? "active" : ""

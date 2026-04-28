@@ -5,12 +5,33 @@ import LoadingState from "./LoadingState";
 import ErrorMessage from "./ErrorMessage";
 import { useCourseSession } from "../hooks/useCourseSession";
 import {
-  generateCourseSummary,
+  createCourseSummaryJob,
+  createCourseIndex,
+  getCourseIndexStatus,
+  getCourseSummaryStatus,
   uploadCourseFiles,
 } from "../lib/api";
 import { clearAllFiles, persistFilesLocally } from "../lib/fileStore";
+import type {
+  CourseIndexStatus,
+  CourseSummary,
+  CourseSummaryProgress,
+  UploadedCourseFile,
+} from "../lib/types";
 
-type Step = "idle" | "uploading" | "summarizing";
+type Step =
+  | "idle"
+  | "uploading"
+  | "creating_index"
+  | "waiting_index"
+  | "summarizing";
+
+const MAX_FILES = 10;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const INDEX_POLL_INTERVAL_MS = 2500;
+const INDEX_WAIT_TIMEOUT_MS = 90_000;
+const SUMMARY_POLL_INTERVAL_MS = 2000;
+const SUMMARY_WAIT_TIMEOUT_MS = 180_000;
 
 export default function CourseSetup() {
   const {
@@ -19,6 +40,7 @@ export default function CourseSetup() {
     setSetupField,
     files,
     setFiles,
+    updateFile,
     startClass,
   } = useCourseSession();
 
@@ -26,6 +48,7 @@ export default function CourseSetup() {
   const [step, setStep] = useState<Step>("idle");
   const [localError, setLocalError] = useState<string | undefined>();
   const [fieldError, setFieldError] = useState<string | undefined>();
+  const [summaryProgress, setSummaryProgress] = useState<CourseSummaryProgress>();
 
   const isLoading = step !== "idle";
 
@@ -35,6 +58,12 @@ export default function CourseSetup() {
       return "El objetivo del curso es obligatorio.";
     if (rawFiles.length === 0)
       return "Debe subirse mínimo un archivo del curso.";
+    if (rawFiles.length > MAX_FILES)
+      return `Solo puedes subir hasta ${MAX_FILES} archivos por curso.`;
+    const tooLarge = rawFiles.find((f) => f.size > MAX_FILE_BYTES);
+    if (tooLarge) {
+      return `${tooLarge.name} excede el limite de 5 MB por archivo.`;
+    }
     return null;
   };
 
@@ -46,21 +75,35 @@ export default function CourseSetup() {
       return;
     }
     setFieldError(undefined);
+    setSummaryProgress(undefined);
 
     try {
       setStep("uploading");
-      setFiles(
-        files.map((f) => ({ ...f, status: "uploading" as const }))
-      );
-      const uploaded = await uploadCourseFiles(rawFiles);
-      const fileIds = uploaded.fileIds ?? [];
-      const vectorStoreId = uploaded.vectorStoreId;
-      const courseContent = uploaded.courseContent;
-      if (!vectorStoreId) throw new Error("No se pudo procesar el curso.");
+      setFiles(files.map((f) => ({ ...f, status: "queued" as const, error: undefined })));
 
-      setFiles(
-        files.map((f) => ({ ...f, status: "ready" as const }))
-      );
+      const uploadedFiles: {
+        fileId: string;
+        name: string;
+        extractedText: string;
+      }[] = [];
+
+      for (const file of rawFiles) {
+        updateFile(file.name, { status: "uploading", error: undefined });
+        const uploaded = await uploadCourseFiles(file);
+        if (!uploaded.fileId) {
+          throw new Error(`No se pudo subir ${file.name}.`);
+        }
+        uploadedFiles.push({
+          fileId: uploaded.fileId,
+          name: file.name,
+          extractedText: uploaded.extractedText || "",
+        });
+        updateFile(file.name, {
+          status: "uploaded",
+          fileId: uploaded.fileId,
+          extractedTextPreview: uploaded.extractedTextPreview,
+        });
+      }
 
       try {
         await clearAllFiles();
@@ -77,32 +120,88 @@ export default function CourseSetup() {
         );
       }
 
+      let vectorStoreId: string | undefined;
+      let courseContent = buildFallbackCourseContent(uploadedFiles);
+      let indexStatus: CourseIndexStatus = "degraded";
+      let indexWarning: string | undefined;
+
+      try {
+        setStep("creating_index");
+        setFiles(buildFileState(rawFiles, uploadedFiles, "processing"));
+
+        const indexRes = await createCourseIndex({
+          fileIds: uploadedFiles.map((f) => f.fileId),
+          fileNames: uploadedFiles.map((f) => f.name),
+          extractedTexts: uploadedFiles.map((f) => f.extractedText),
+        });
+        vectorStoreId = indexRes.vectorStoreId;
+        courseContent = indexRes.courseContent || courseContent;
+
+        if (vectorStoreId) {
+          setStep("waiting_index");
+          indexStatus = await waitForIndex(vectorStoreId);
+          if (indexStatus === "ready") {
+            setFiles(buildFileState(rawFiles, uploadedFiles, "ready"));
+          } else {
+            indexWarning =
+              "El indice del curso no termino a tiempo. Entraras con modo degradado mientras el material termina de procesarse.";
+          }
+        } else {
+          indexWarning =
+            "No se pudo crear el indice del curso. Entraras con el material extraido localmente.";
+        }
+      } catch (err) {
+        indexStatus = "degraded";
+        indexWarning =
+          err instanceof Error
+            ? `${err.message} Entraras con modo degradado.`
+            : "No se pudo crear el indice del curso. Entraras con modo degradado.";
+      }
+
+      if (indexStatus !== "ready") {
+        setFiles(buildFileState(rawFiles, uploadedFiles, "processing"));
+      }
+
       setStep("summarizing");
-      const summaryRes = await generateCourseSummary({
+      const summaryReq = {
         courseName: setup.courseName,
         courseObjective: setup.courseObjective,
         studentType: profile.role,
         studentLevel: profile.level,
         businessCase: `${profile.businessType} (${profile.industry})`,
         agentStyle: setup.agentStyle,
-        fileIds,
-        vectorStoreId,
-        courseContent,
-      });
-
-      if (!summaryRes.summary) {
-        throw new Error("No se pudo procesar el curso.");
+        fileIds: uploadedFiles.map((f) => f.fileId),
+        fileNames: uploadedFiles.map((f) => f.name),
+        extractedTexts: uploadedFiles.map((f) => f.extractedText),
+        vectorStoreId: indexStatus === "ready" ? vectorStoreId : undefined,
+        courseContent: indexStatus === "ready" ? undefined : courseContent,
+        chunking: { chunkSize: 3000, overlap: 400 },
+      };
+      const summaryJob = await createCourseSummaryJob(summaryReq);
+      if (!summaryJob.jobId) {
+        throw new Error("No se pudo iniciar el resumen del curso.");
       }
+      const summaryRes = await waitForSummaryJob(
+        summaryJob.jobId,
+        summaryJob.preliminarySummary,
+        setSummaryProgress
+      );
 
       startClass({
-        fileIds,
+        fileIds: uploadedFiles.map((f) => f.fileId),
         vectorStoreId,
+        indexStatus,
         summary: summaryRes.summary,
         courseContent,
       });
+      if (indexWarning) {
+        setLocalError(indexWarning);
+      }
+      setSummaryProgress(undefined);
       setStep("idle");
     } catch (e) {
       setStep("idle");
+      setSummaryProgress(undefined);
       setFiles(
         files.map((f) =>
           f.status === "uploading" || f.status === "processing"
@@ -187,7 +286,11 @@ export default function CourseSetup() {
                 inline
                 label={
                   step === "uploading"
-                    ? "Subiendo y procesando archivos…"
+                    ? "Subiendo archivos…"
+                    : step === "creating_index"
+                    ? "Creando indice del curso…"
+                    : step === "waiting_index"
+                    ? "Indexando material en OpenAI…"
                     : "Analizando el material del curso…"
                 }
               />
@@ -201,18 +304,104 @@ export default function CourseSetup() {
           <div className="setup-progress-note">
             <strong>
               {step === "uploading"
-                ? "Paso 1 de 2 — Subiendo archivos a OpenAI y creando el índice del curso."
-                : "Paso 2 de 2 — El agente está leyendo tu material y preparando el resumen inicial."}
+                ? "Paso 1 de 3 — Subiendo archivos a OpenAI."
+                : step === "creating_index"
+                ? "Paso 2 de 3 — Creando el indice del curso."
+                : step === "waiting_index"
+                ? "Paso 2 de 3 — Esperando a que OpenAI termine de indexar el material."
+                : `Paso 3 de 3 — Preparando el resumen inicial del curso${
+                    summaryProgress ? ` (${summaryProgress.percent}%)` : "."
+                  }`}
             </strong>
             <span>
-              Esto puede tardar entre 30 y 60 segundos la primera vez. No
-              cierres la pestaña.
+              {step === "summarizing"
+                ? "La clase puede iniciar con un resumen preliminar mientras termina el analisis completo."
+                : "Si el indice tarda demasiado, la clase arrancara en modo degradado para no bloquearte. No cierres la pestana."}
             </span>
           </div>
         ) : null}
       </section>
     </main>
   );
+}
+
+function buildFileState(
+  rawFiles: File[],
+  uploadedFiles: {
+    fileId: string;
+    name: string;
+    extractedText: string;
+  }[],
+  status: "processing" | "ready"
+): UploadedCourseFile[] {
+  return rawFiles.map((f) => {
+    const current = uploadedFiles.find((x) => x.name === f.name);
+    return {
+      name: f.name,
+      size: f.size,
+      type: f.type,
+      status,
+      error: undefined,
+      fileId: current?.fileId,
+      extractedTextPreview: current?.extractedText.slice(0, 500),
+    };
+  });
+}
+
+function buildFallbackCourseContent(
+  files: { name: string; extractedText: string }[]
+): string {
+  const joined = files
+    .map((file) => {
+      const text = file.extractedText.trim().slice(0, 12_000);
+      return `=== ${file.name} ===\n${text || "[sin contenido legible]"}`;
+    })
+    .join("\n\n");
+  return joined.length > 40_000
+    ? `${joined.slice(0, 40_000)}\n\n[contenido truncado]`
+    : joined;
+}
+
+async function waitForIndex(
+  vectorStoreId: string
+): Promise<CourseIndexStatus> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < INDEX_WAIT_TIMEOUT_MS) {
+    const res = await getCourseIndexStatus(vectorStoreId);
+    if (res.status === "ready") return "ready";
+    if (res.status === "failed") return "degraded";
+    await sleep(INDEX_POLL_INTERVAL_MS);
+  }
+  return "degraded";
+}
+
+async function waitForSummaryJob(
+  jobId: string,
+  preliminarySummary: CourseSummary | undefined,
+  onProgress: (progress: CourseSummaryProgress | undefined) => void
+): Promise<{ summary: CourseSummary }> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < SUMMARY_WAIT_TIMEOUT_MS) {
+    const res = await getCourseSummaryStatus(jobId);
+    onProgress(res.progress);
+    if (res.status === "ready" && res.summary) {
+      return { summary: res.summary };
+    }
+    if (res.status === "failed") {
+      break;
+    }
+    await sleep(SUMMARY_POLL_INTERVAL_MS);
+  }
+  if (preliminarySummary) {
+    return { summary: preliminarySummary };
+  }
+  throw new Error(
+    "El resumen final no termino a tiempo. Intenta de nuevo o reduce el contenido por archivo."
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function Field(props: {

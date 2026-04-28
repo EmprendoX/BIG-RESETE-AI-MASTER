@@ -1,8 +1,14 @@
 import type {
   ChatRequest,
   ChatResponseBody,
+  CourseIndexStatusResponse,
+  CreateCourseSummaryJobRequest,
+  CreateCourseSummaryJobResponse,
+  CreateCourseIndexRequest,
+  CreateCourseIndexResponse,
   GenerateCourseSummaryRequest,
   GenerateCourseSummaryResponse,
+  GetCourseSummaryStatusResponse,
   TranscribeResponse,
   UploadCourseFileResponse,
 } from "./types";
@@ -19,10 +25,10 @@ async function parseJson<T>(res: Response): Promise<T> {
 }
 
 export async function uploadCourseFiles(
-  files: File[]
+  file: File
 ): Promise<UploadCourseFileResponse> {
   const form = new FormData();
-  files.forEach((f) => form.append("files", f, f.name));
+  form.append("file", file, file.name);
   const res = await fetch(`${BASE}/upload-course-file`, {
     method: "POST",
     body: form,
@@ -30,6 +36,36 @@ export async function uploadCourseFiles(
   const data = await parseJson<UploadCourseFileResponse>(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || "No se pudo procesar el curso.");
+  }
+  return data;
+}
+
+export async function createCourseIndex(
+  req: CreateCourseIndexRequest
+): Promise<CreateCourseIndexResponse> {
+  const res = await fetch(`${BASE}/create-course-index`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const data = await parseJson<CreateCourseIndexResponse>(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || "No se pudo crear el indice del curso.");
+  }
+  return data;
+}
+
+export async function getCourseIndexStatus(
+  vectorStoreId: string
+): Promise<CourseIndexStatusResponse> {
+  const res = await fetch(
+    `${BASE}/get-course-index-status?vectorStoreId=${encodeURIComponent(
+      vectorStoreId
+    )}`
+  );
+  const data = await parseJson<CourseIndexStatusResponse>(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || "No se pudo consultar el indice del curso.");
   }
   return data;
 }
@@ -45,6 +81,34 @@ export async function generateCourseSummary(
   const data = await parseJson<GenerateCourseSummaryResponse>(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || "No se pudo procesar el curso.");
+  }
+  return data;
+}
+
+export async function createCourseSummaryJob(
+  req: CreateCourseSummaryJobRequest
+): Promise<CreateCourseSummaryJobResponse> {
+  const res = await fetch(`${BASE}/create-course-summary-job`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  const data = await parseJson<CreateCourseSummaryJobResponse>(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || "No se pudo iniciar el resumen del curso.");
+  }
+  return data;
+}
+
+export async function getCourseSummaryStatus(
+  jobId: string
+): Promise<GetCourseSummaryStatusResponse> {
+  const res = await fetch(
+    `${BASE}/get-course-summary-status?jobId=${encodeURIComponent(jobId)}`
+  );
+  const data = await parseJson<GetCourseSummaryStatusResponse>(res);
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || "No se pudo consultar el resumen del curso.");
   }
   return data;
 }

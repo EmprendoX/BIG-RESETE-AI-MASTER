@@ -22,9 +22,20 @@ export type ActiveContentContext = {
 
 export type FileStatus =
   | "idle"
+  | "queued"
   | "uploading"
+  | "uploaded"
   | "processing"
   | "ready"
+  | "error";
+
+export type CourseIndexStatus =
+  | "idle"
+  | "uploading"
+  | "creating"
+  | "processing"
+  | "ready"
+  | "degraded"
   | "error";
 
 export type AgentStatus =
@@ -56,6 +67,7 @@ export type UploadedCourseFile = {
   status: FileStatus;
   error?: string;
   fileId?: string;
+  extractedTextPreview?: string;
 };
 
 export type CourseSummary = {
@@ -77,6 +89,7 @@ export type CourseSession = {
   uploadedFiles: UploadedCourseFile[];
   fileIds?: string[];
   vectorStoreId?: string;
+  indexStatus?: CourseIndexStatus;
   courseContent?: string;
   courseSummary?: CourseSummary;
   createdAt: string;
@@ -110,9 +123,31 @@ export type NotesDocument = {
 
 export type UploadCourseFileResponse = {
   success: boolean;
-  fileIds?: string[];
+  fileId?: string;
+  filename?: string;
+  extractedText?: string;
+  extractedTextPreview?: string;
+  error?: string;
+};
+
+export type CreateCourseIndexRequest = {
+  fileIds: string[];
+  fileNames?: string[];
+  extractedTexts?: string[];
+};
+
+export type CreateCourseIndexResponse = {
+  success: boolean;
   vectorStoreId?: string;
+  status?: "processing" | "ready";
   courseContent?: string;
+  error?: string;
+};
+
+export type CourseIndexStatusResponse = {
+  success: boolean;
+  vectorStoreId?: string;
+  status?: "processing" | "ready" | "failed" | "not_found";
   error?: string;
 };
 
@@ -131,6 +166,44 @@ export type GenerateCourseSummaryRequest = {
 export type GenerateCourseSummaryResponse = {
   success: boolean;
   summary?: CourseSummary;
+  error?: string;
+};
+
+export type CourseSummaryJobStatus = "queued" | "processing" | "ready" | "failed";
+export type CourseSummaryStage = "chunk" | "batch" | "final";
+
+export type CourseSummaryProgress = {
+  totalChunks: number;
+  processedChunks: number;
+  percent: number;
+  stage: CourseSummaryStage;
+};
+
+export type CreateCourseSummaryJobRequest = GenerateCourseSummaryRequest & {
+  fileNames?: string[];
+  extractedTexts?: string[];
+  chunking?: {
+    chunkSize?: number;
+    overlap?: number;
+  };
+};
+
+export type CreateCourseSummaryJobResponse = {
+  success: boolean;
+  jobId?: string;
+  status?: CourseSummaryJobStatus;
+  preliminarySummary?: CourseSummary;
+  error?: string;
+};
+
+export type GetCourseSummaryStatusResponse = {
+  success: boolean;
+  jobId?: string;
+  status?: CourseSummaryJobStatus;
+  attemptCount?: number;
+  progress?: CourseSummaryProgress;
+  summary?: CourseSummary;
+  preliminarySummary?: CourseSummary;
   error?: string;
 };
 

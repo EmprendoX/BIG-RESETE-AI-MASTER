@@ -30,6 +30,10 @@ OPENAI_MODEL=gpt-4o-mini
 
 Las variables se configuran igual en Netlify (Site settings → Environment variables). **La API key nunca se expone al frontend.**
 
+**Prioridad shell vs `.env`:** si en la terminal ejecutas `export OPENAI_API_KEY=...` antes de `netlify dev`, ese valor **no lo sobrescribe** el `.env` del proyecto. Un `export` con texto de ejemplo (p. ej. un placeholder) provoca 401 aunque `.env` tenga una clave real. Arranca con `npx netlify dev` desde la raíz del repo sin ese export, o bien `unset OPENAI_API_KEY` y luego `npx netlify dev`.
+
+Si la clave llegó a mostrarse en un chat o log compartido, **revócala** en [API keys](https://platform.openai.com/account/api-keys) y actualiza `.env`.
+
 ## Instalar y correr
 
 ```bash

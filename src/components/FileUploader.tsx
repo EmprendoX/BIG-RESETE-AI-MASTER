@@ -1,7 +1,11 @@
 import { useDropzone } from "react-dropzone";
 import { FileText, Upload, X, CheckCircle2, AlertCircle } from "lucide-react";
+import { useState } from "react";
 import { useCourseSession } from "../hooks/useCourseSession";
 import type { UploadedCourseFile } from "../lib/types";
+
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_FILES = 10;
 
 const ACCEPTED = {
   "application/pdf": [".pdf"],
@@ -22,11 +26,13 @@ type Props = {
 export default function FileUploader({ rawFiles, onChangeRawFiles }: Props) {
   const files = useCourseSession((s) => s.files);
   const setFiles = useCourseSession((s) => s.setFiles);
+  const [dropError, setDropError] = useState<string | undefined>();
 
   const onDrop = (accepted: File[]) => {
+    setDropError(undefined);
     const current = new Map(rawFiles.map((f) => [f.name, f] as const));
     accepted.forEach((f) => current.set(f.name, f));
-    const next = Array.from(current.values());
+    const next = Array.from(current.values()).slice(0, MAX_FILES);
     onChangeRawFiles(next);
 
     const meta: UploadedCourseFile[] = next.map((f) => {
@@ -43,6 +49,12 @@ export default function FileUploader({ rawFiles, onChangeRawFiles }: Props) {
     setFiles(meta);
   };
 
+  const onDropRejected = () => {
+    setDropError(
+      "Solo se aceptan PDF, PPTX, DOCX o TXT de hasta 5 MB por archivo."
+    );
+  };
+
   const removeFile = (name: string) => {
     onChangeRawFiles(rawFiles.filter((f) => f.name !== name));
     setFiles(files.filter((f) => f.name !== name));
@@ -51,7 +63,10 @@ export default function FileUploader({ rawFiles, onChangeRawFiles }: Props) {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: ACCEPTED,
     onDrop,
+    onDropRejected,
     multiple: true,
+    maxSize: MAX_FILE_BYTES,
+    maxFiles: MAX_FILES,
   });
 
   return (
@@ -69,7 +84,12 @@ export default function FileUploader({ rawFiles, onChangeRawFiles }: Props) {
             : "Arrastra archivos o haz clic para seleccionar"}
         </p>
         <span className="dropzone-hint">PDF, PPTX, DOCX o TXT</span>
+        <span className="dropzone-hint">
+          Maximo {MAX_FILES} archivos, 5 MB por archivo
+        </span>
       </div>
+
+      {dropError ? <div className="upload-inline-error">{dropError}</div> : null}
 
       {files.length > 0 ? (
         <ul className="file-list">
@@ -110,6 +130,10 @@ function StatusLabel({
     );
   if (status === "uploading")
     return <span className="status status-uploading">Subiendo…</span>;
+  if (status === "queued")
+    return <span className="status status-idle">En cola</span>;
+  if (status === "uploaded")
+    return <span className="status status-uploading">Subido</span>;
   if (status === "processing")
     return <span className="status status-processing">Procesando…</span>;
   if (status === "error")

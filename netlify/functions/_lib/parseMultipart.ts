@@ -13,13 +13,32 @@ export type ParsedMultipart = {
   fields: Record<string, string>;
 };
 
-export async function parseMultipart(req: Request): Promise<ParsedMultipart> {
+export async function parseMultipart(
+  req: Request,
+  opts?: { maxBytes?: number }
+): Promise<ParsedMultipart> {
   const contentType = req.headers.get("content-type") || "";
   if (!contentType.toLowerCase().includes("multipart/form-data")) {
     throw new Error("Contenido no es multipart/form-data.");
   }
 
+  const contentLength = Number(req.headers.get("content-length") || "0");
+  if (opts?.maxBytes && contentLength > opts.maxBytes) {
+    throw new Error(
+      `El archivo excede el limite permitido de ${Math.round(
+        opts.maxBytes / 1024 / 1024
+      )} MB.`
+    );
+  }
+
   const bodyBuffer = Buffer.from(await req.arrayBuffer());
+  if (opts?.maxBytes && bodyBuffer.byteLength > opts.maxBytes) {
+    throw new Error(
+      `El archivo excede el limite permitido de ${Math.round(
+        opts.maxBytes / 1024 / 1024
+      )} MB.`
+    );
+  }
 
   return await new Promise<ParsedMultipart>((resolve, reject) => {
     const busboy = Busboy({ headers: { "content-type": contentType } });

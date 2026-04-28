@@ -4,6 +4,7 @@ import type {
   ActiveContentContext,
   AgentStatus,
   ChatMessage,
+  CourseIndexStatus,
   CourseSession,
   CourseSetup,
   CourseSummary,
@@ -25,6 +26,7 @@ export type SessionState = {
   files: UploadedCourseFile[];
   fileIds?: string[];
   vectorStoreId?: string;
+  indexStatus?: CourseIndexStatus;
   courseContent?: string;
   summary?: CourseSummary;
   createdAt?: string;
@@ -56,7 +58,8 @@ export type SessionState = {
   ) => void;
   startClass: (data: {
     fileIds: string[];
-    vectorStoreId: string;
+    vectorStoreId?: string;
+    indexStatus?: CourseIndexStatus;
     summary: CourseSummary;
     courseContent?: string;
   }) => void;
@@ -142,11 +145,12 @@ export const useCourseSession = create<SessionState>()(
           ),
         })),
 
-      startClass: ({ fileIds, vectorStoreId, summary, courseContent }) =>
+      startClass: ({ fileIds, vectorStoreId, indexStatus, summary, courseContent }) =>
         set((state) => ({
           view: "classroom",
           fileIds,
           vectorStoreId,
+          indexStatus,
           courseContent,
           summary,
           createdAt: new Date().toISOString(),
@@ -232,6 +236,7 @@ export const useCourseSession = create<SessionState>()(
           files: [],
           fileIds: undefined,
           vectorStoreId: undefined,
+          indexStatus: undefined,
           courseContent: undefined,
           summary: undefined,
           createdAt: undefined,
@@ -253,13 +258,14 @@ export const useCourseSession = create<SessionState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state): PersistedSlice => ({
         session:
-          state.vectorStoreId && state.fileIds
+          state.fileIds
             ? {
                 ...state.setup,
                 studentProfile: state.profile,
                 uploadedFiles: state.files,
                 fileIds: state.fileIds,
                 vectorStoreId: state.vectorStoreId,
+                indexStatus: state.indexStatus,
                 courseContent: state.courseContent,
                 courseSummary: state.summary,
                 createdAt: state.createdAt ?? new Date().toISOString(),
@@ -287,6 +293,7 @@ export const useCourseSession = create<SessionState>()(
           files: p.session?.uploadedFiles ?? current.files,
           fileIds: p.session?.fileIds,
           vectorStoreId: p.session?.vectorStoreId,
+          indexStatus: p.session?.indexStatus,
           courseContent: p.session?.courseContent,
           summary: p.session?.courseSummary,
           createdAt: p.session?.createdAt,

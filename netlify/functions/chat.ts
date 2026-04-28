@@ -4,7 +4,13 @@ import {
   TUTOR_SYSTEM_PROMPT,
   fillPlaceholders,
 } from "./_lib/prompts";
-import { errorResponse, getModel, getOpenAI, jsonResponse } from "./_lib/openai";
+import {
+  errorResponse,
+  getModel,
+  getOpenAI,
+  jsonResponse,
+  withTimeoutAndRetry,
+} from "./_lib/openai";
 
 type ChatMessageIn = {
   role: "user" | "assistant";
@@ -68,16 +74,20 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     body.courseContent.trim().length > 0;
 
   const basePrompt = fillPlaceholders(TUTOR_SYSTEM_PROMPT, body);
+  const boundedCourseContent =
+    typeof body.courseContent === "string"
+      ? body.courseContent.slice(0, 24_000)
+      : undefined;
   const systemPrompt = hasCourseContent
-    ? `${basePrompt}\n\nMATERIAL DEL CURSO:\n${body.courseContent}`
+    ? `${basePrompt}\n\nMATERIAL DEL CURSO:\n${boundedCourseContent}`
     : basePrompt;
 
   const history = (body.messages ?? [])
-    .slice(-20)
+    .slice(-12)
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({
       role: m.role,
-      content: m.content,
+      content: m.content.slice(0, 1200),
     }));
 
   const notesBlock = body.notesContext
@@ -96,7 +106,7 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
       : "";
 
   const input = [
-    { role: "system" as const, content: systemPrompt },
+    { role: "system" as const, content: systemPrompt.slice(0, 30_000) },
     ...history,
     {
       role: "user" as const,
@@ -115,25 +125,39 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     : undefined;
 
   try {
-    const response = await openai.responses.create({
-      model,
-      input,
-      tools,
-      text: {
-        format: {
-          type: "json_schema",
-          name: AGENT_RESPONSE_JSON_SCHEMA.name,
-          schema: AGENT_RESPONSE_JSON_SCHEMA.schema,
-          strict: true,
+    let reducedPrompt = false;
+    const parsed = await withTimeoutAndRetry(
+      async (signal) => {
+        const response = await openai.responses.create(
+          {
+            model,
+            input: reducedPrompt ? trimInputForRetry(input) : input,
+            tools: reducedPrompt ? undefined : tools,
+            text: {
+              format: {
+                type: "json_schema",
+                name: AGENT_RESPONSE_JSON_SCHEMA.name,
+                schema: AGENT_RESPONSE_JSON_SCHEMA.schema,
+                strict: true,
+              },
+            },
         },
+          { signal }
+        );
+        const text = response.output_text;
+        if (!text) {
+          throw new Error("Respuesta vacia del modelo.");
+        }
+        return JSON.parse(text);
       },
-    });
-
-    const text = response.output_text;
-    if (!text) {
-      return errorResponse(502, "Respuesta vacía del modelo.");
-    }
-    const parsed = JSON.parse(text);
+      {
+        timeoutMs: 18_000,
+        retries: 0,
+        onRetry: () => {
+          reducedPrompt = true;
+        },
+      }
+    );
 
     return jsonResponse(200, { success: true, response: parsed });
   } catch (err) {
@@ -146,3 +170,19 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     );
   }
 };
+
+function trimInputForRetry(
+  input: Array<{ role: "system" | "user" | "assistant"; content: string }>
+): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  const system = input[0];
+  const lastUser = input[input.length - 1];
+  const reducedSystem = {
+    ...system,
+    content: system.content.slice(0, 12_000),
+  };
+  const reducedUser = {
+    ...lastUser,
+    content: lastUser.content.slice(0, 1400),
+  };
+  return [reducedSystem, reducedUser];
+}
