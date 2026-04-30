@@ -14,6 +14,8 @@ import type {
 } from "./types";
 
 const BASE = "/.netlify/functions";
+const UPLOAD_RETRY_DELAYS_MS = [600, 1600];
+const UPLOAD_TIMEOUT_MS = 45_000;
 
 async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -24,20 +26,78 @@ async function parseJson<T>(res: Response): Promise<T> {
   }
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isTransientRequestError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AbortError") return true;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("network") ||
+    msg.includes("failed to fetch") ||
+    msg.includes("load failed") ||
+    msg.includes("timeout")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function uploadCourseFiles(
   file: File
 ): Promise<UploadCourseFileResponse> {
   const form = new FormData();
   form.append("file", file, file.name);
-  const res = await fetch(`${BASE}/upload-course-file`, {
-    method: "POST",
-    body: form,
-  });
-  const data = await parseJson<UploadCourseFileResponse>(res);
-  if (!res.ok || !data.success) {
-    throw new Error(data.error || "No se pudo procesar el curso.");
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= UPLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(
+        `${BASE}/upload-course-file`,
+        {
+          method: "POST",
+          body: form,
+        },
+        UPLOAD_TIMEOUT_MS
+      );
+      const data = await parseJson<UploadCourseFileResponse>(res);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "No se pudo procesar el curso.");
+      }
+      return data;
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientRequestError(err) || attempt >= UPLOAD_RETRY_DELAYS_MS.length) {
+        break;
+      }
+      await sleep(UPLOAD_RETRY_DELAYS_MS[attempt]);
+    }
   }
-  return data;
+  if (lastErr instanceof DOMException && lastErr.name === "AbortError") {
+    throw new Error(
+      "La carga tardó demasiado por tu conexión. Reintenta con mejor señal o un archivo más pequeño."
+    );
+  }
+  if (lastErr instanceof Error) {
+    throw lastErr;
+  }
+  throw new Error("No se pudo procesar el curso.");
 }
 
 export async function createCourseIndex(

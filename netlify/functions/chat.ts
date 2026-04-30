@@ -8,6 +8,7 @@ import {
   errorResponse,
   getModel,
   getOpenAI,
+  isAbortLikeError,
   jsonResponse,
   withTimeoutAndRetry,
 } from "./_lib/openai";
@@ -69,13 +70,17 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     );
   }
 
+  const useVectorSearch =
+    typeof body.vectorStoreId === "string" && body.vectorStoreId.trim().length > 0;
+
   const hasCourseContent =
+    !useVectorSearch &&
     typeof body.courseContent === "string" &&
     body.courseContent.trim().length > 0;
 
   const basePrompt = fillPlaceholders(TUTOR_SYSTEM_PROMPT, body);
   const boundedCourseContent =
-    typeof body.courseContent === "string"
+    hasCourseContent && typeof body.courseContent === "string"
       ? body.courseContent.slice(0, 24_000)
       : undefined;
   const systemPrompt = hasCourseContent
@@ -83,7 +88,7 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     : basePrompt;
 
   const history = (body.messages ?? [])
-    .slice(-12)
+    .slice(-8)
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({
       role: m.role,
@@ -93,7 +98,7 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
   const notesBlock = body.notesContext
     ? `\n\nContexto de las notas actuales del alumno:\n"""${body.notesContext.slice(
         0,
-        2000
+        1200
       )}"""`
     : "";
   const activeContentBlock =
@@ -114,11 +119,11 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     },
   ];
 
-  const tools = body.vectorStoreId
+  const tools = useVectorSearch
     ? [
         {
           type: "file_search" as const,
-          vector_store_ids: [body.vectorStoreId],
+          vector_store_ids: [body.vectorStoreId as string],
           max_num_results: 5,
         },
       ]
@@ -151,8 +156,8 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
         return JSON.parse(text);
       },
       {
-        timeoutMs: 18_000,
-        retries: 0,
+        timeoutMs: 32_000,
+        retries: 1,
         onRetry: () => {
           reducedPrompt = true;
         },
@@ -162,6 +167,12 @@ export default async (req: Request, _ctx: Context): Promise<Response> => {
     return jsonResponse(200, { success: true, response: parsed });
   } catch (err) {
     console.error("chat error", err);
+    if (isAbortLikeError(err)) {
+      return errorResponse(
+        504,
+        "La respuesta tardó más de lo esperado. Intenta de nuevo con una pregunta más corta."
+      );
+    }
     return errorResponse(
       500,
       err instanceof Error

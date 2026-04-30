@@ -50,6 +50,16 @@ export function errorResponse(status: number, error: string): Response {
   return jsonResponse(status, { success: false, error });
 }
 
+export function isAbortLikeError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error) {
+    if (err.name === "AbortError") return true;
+    return /abort/i.test(err.message);
+  }
+  return false;
+}
+
 type RetryOptions = {
   timeoutMs?: number;
   retries?: number;

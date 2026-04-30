@@ -40,6 +40,7 @@ export function useChat() {
 
       try {
         setAgentStatus("searching_course");
+        const useVectorSearch = indexStatus === "ready" && Boolean(vectorStoreId);
         const data = await sendChatMessage({
           courseName: setup.courseName,
           courseObjective: setup.courseObjective,
@@ -53,12 +54,13 @@ export function useChat() {
           mainGoal: profile.mainGoal,
           mainChallenge: profile.mainChallenge,
           activeContent,
-          vectorStoreId: indexStatus === "ready" ? vectorStoreId : undefined,
+          vectorStoreId: useVectorSearch ? vectorStoreId : undefined,
           fileIds,
           messages: [...messages, userMessage],
           userMessage: trimmed,
           notesContext: notes.content,
-          courseContent,
+          // Avoid sending large fallback content once vector search is available.
+          courseContent: useVectorSearch ? undefined : courseContent,
         });
         setAgentStatus("responding");
         if (data.response) {
